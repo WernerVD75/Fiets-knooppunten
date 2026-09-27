@@ -1,0 +1,187 @@
+<!DOCTYPE html> 
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fietsknooppunten GPX Maker</title>
+  
+  <!-- Leaflet CSS & JS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; height: 100vh; }
+    
+    #controls {
+      padding: 12px 16px;
+      background-color: #f8f9fa;
+      border-bottom: 1px solid #ddd;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    input[type="text"] {
+      padding: 8px 12px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      font-size: 14px;
+      width: 220px;
+    }
+
+    button {
+      padding: 8px 16px;
+      font-size: 14px;
+      font-weight: 600;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+
+    .btn-primary { background-color: #007bff; color: white; }
+    .btn-primary:hover { background-color: #0056b3; }
+    .btn-secondary { background-color: #6c757d; color: white; }
+    .btn-secondary:hover { background-color: #545b62; }
+    .btn-danger { background-color: #dc3545; color: white; }
+    .btn-danger:hover { background-color: #bd2130; }
+
+    #info { font-size: 14px; color: #495057; margin-left: auto; }
+    #map { flex: 1; width: 100%; }
+  </style>
+</head>
+<body>
+
+  <div id="controls">
+    <input type="text" id="routeName" value="Fietsroute Knooppunten" placeholder="Routenaam">
+    <button class="btn-primary" onclick="downloadGPX()">Download GPX</button>
+    <button class="btn-secondary" onclick="undoLast()">Laatste punt wissen</button>
+    <button class="btn-danger" onclick="clearAll()">Alles wissen</button>
+    <span id="info">Aantal punten: 0</span>
+  </div>
+
+  <div id="map"></div>
+
+  <script>
+    // Initialiseer de kaart (standaard gecentreerd op Vlaanderen / Nederland grens)
+    const map = L.map('map').setView([51.3, 4.85], 11);
+
+    // OpenStreetMap Fietspad / Cycle Layer (OpenCycleMap / Standard OSM)
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+    }).addTo(map);
+
+    let routePoints = [];
+    let markers = [];
+    let polyline = L.polyline([], { color: '#007bff', weight: 5, opacity: 0.8 }).addTo(map);
+
+    // Klik op de kaart om een knooppunt / waypoint toe te voegen
+    map.on('click', function(e) {
+      const lat = e.latlng.lat;
+      const lng = e.latlng.lng;
+      const pointIndex = routePoints.length + 1;
+
+      routePoints.push([lat, lng]);
+
+      // Maak een custom genummerde marker op de kaart
+      const marker = L.circleMarker([lat, lng], {
+        radius: 9,
+        fillColor: '#007bff',
+        color: '#ffffff',
+        weight: 2,
+        opacity: 1,
+        fillOpacity: 0.9
+      }).addTo(map);
+
+      marker.bindTooltip(`Punt ${pointIndex}`, { permanent: false, direction: 'top' });
+      markers.push(marker);
+
+      updateMap();
+    });
+
+    function updateMap() {
+      polyline.setLatLngs(routePoints);
+      document.getElementById('info').innerText = `Aantal punten: ${routePoints.length}`;
+    }
+
+    function undoLast() {
+      if (routePoints.length === 0) return;
+      routePoints.pop();
+      const lastMarker = markers.pop();
+      map.removeLayer(lastMarker);
+      updateMap();
+    }
+
+    function clearAll() {
+      routePoints = [];
+      markers.forEach(m => map.removeLayer(m));
+      markers = [];
+      updateMap();
+    }
+
+    // Genereer en download het GPX bestand voor Bosch Flow App
+    function downloadGPX() {
+      if (routePoints.length === 0) {
+        alert("Klik eerst een paar punten op de kaart om een route te maken.");
+        return;
+      }
+
+      const name = document.getElementById('routeName').value || "Fietsroute";
+      const timestamp = new Date().toISOString();
+
+      let gpx = `<?xml version="1.0" encoding="UTF-8"?>\n`;
+      gpx += `<gpx version="1.1" creator="Fietsknooppunten GPX Maker" xmlns="http://www.topografix.com/GPX/1/1">\n`;
+      gpx += `  <metadata>\n    <name>${escapeXml(name)}</name>\n    <time>${timestamp}</time>\n  </metadata>\n`;
+      gpx += `  <trk>\n    <name>${escapeXml(name)}</name>\n    <trkseg>\n`;
+
+      routePoints.forEach(pt => {
+        gpx += `      <trkpt lat="${pt[0]}" lon="${pt[1]}"></trkpt>\n`;
+      });
+
+      gpx += `    </trkseg>\n  </trk>\n</gpx>`;
+
+      const blob = new Blob([gpx], { type: 'application/gpx+xml' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `${name.toLowerCase().replace(/[^a-z0-9]/g, '_')}.gpx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+
+    function escapeXml(unsafe) {
+      return unsafe.replace(/[<>&'"]/g, function (c) {
+        switch (c) {
+          case '<': return '&lt;';
+          case '>': return '&gt;';
+          case '&': return '&amp;';
+          case '\'': return '&apos;';
+          case '"': return '&quot;';
+        }
+      });
+    }
+// AUTOMATISCHE OFFLINE BEWAREN
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                const swCode = `
+                    const CACHE = 'wf-cache-v1';
+                    self.addEventListener('install', e => {
+                        e.waitUntil(caches.open(CACHE).then(c => c.add(location.href)));
+                        self.skipWaiting();
+                    });
+                    self.addEventListener('activate', e => self.clients.claim());
+                    self.addEventListener('fetch', e => {
+                        e.respondWith(caches.match(e.request).then(r => r || fetch(e.request)));
+                    });
+                `;
+                const blob = new Blob([swCode], { type: 'application/javascript' });
+                const swUrl = URL.createObjectURL(blob);
+                navigator.serviceWorker.register(swUrl).catch(() => {});
+            });
+        }
+  </script>
+</body>
+</html>
