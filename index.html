@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!DOCTYPE html> 
 <html lang="nl">
 <head>
   <meta charset="UTF-8">
@@ -22,6 +22,18 @@
       align-items: center;
       flex-wrap: wrap;
       z-index: 1000;
+    }
+
+    .input-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    label {
+      font-size: 14px;
+      font-weight: 600;
+      color: #333;
     }
 
     input[type="text"] {
@@ -49,122 +61,199 @@
     .btn-danger { background-color: #dc3545; color: white; }
     .btn-danger:hover { background-color: #bd2130; }
 
-    #info { font-size: 14px; color: #495057; margin-left: auto; }
+    #info { font-size: 14px; color: #495057; margin-left: auto; font-weight: bold; }
+    #status { font-size: 13px; color: #007bff; width: 100%; margin-top: -4px; }
     #map { flex: 1; width: 100%; }
   </style>
 </head>
 <body>
 
   <div id="controls">
-    <input type="text" id="routeName" value="Knooppunten Route" placeholder="Routenaam">
-    <button class="btn-primary" onclick="downloadGPX()">Download GPX</button>
-    <button class="btn-secondary" onclick="undoLast()">Laatste punt wissen</button>
+    <div class="input-group">
+      <label for="routeName">Routenaam:</label>
+      <input type="text" id="routeName" value="Knooppunten_Route" placeholder="Typ hier je routenaam...">
+    </div>
+    
+    <button class="btn-primary" onclick="downloadGPX()">Sla op als GPX</button>
+    <button class="btn-secondary" onclick="undoLast()">Laatste knooppunt wissen</button>
     <button class="btn-danger" onclick="clearAll()">Alles wissen</button>
-    <span id="info">Aantal punten: 0</span>
+    <span id="info">Knooppunten: 0 | Afstand: 0 km</span>
+    <div id="status">Klik op de kaart om je eerste knooppunt aan te duiden...</div>
   </div>
 
   <div id="map"></div>
 
   <script>
-    // Initialiseer de kaart op Beerse / Kempen regio
     const map = L.map('map').setView([51.318, 4.858], 13);
 
-    // CyclOSM - Geïntegreerde fiets- & knooppuntenkaart (werkt uitstekend op GitHub Pages)
+    // CyclOSM Fietskaart met knooppunten
     const cyclosm = L.tileLayer('https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', {
       maxZoom: 18,
       attribution: '<a href="https://www.cyclosm.org">CyclOSM</a> | OpenStreetMap'
     }).addTo(map);
 
-    // OpenFietsMap Nederland/België
     const openfietsmap = L.tileLayer('https://tile.openstreetmap.de/{z}/{x}/{y}.png', {
       maxZoom: 18,
       attribution: 'OpenStreetMap DE'
     });
 
-    // Standaard OSM
-    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: 'OpenStreetMap'
-    });
-
-    // Schakelaar voor kaartlagen rechtsboven
     const baseMaps = {
-      "Fietskaart (CyclOSM met knooppunten)": cyclosm,
-      "Standaard Fietskaart": openfietsmap,
-      "OpenStreetMap Standaard": osm
+      "Fietskaart (CyclOSM)": cyclosm,
+      "Standaard Fietskaart": openfietsmap
     };
     L.control.layers(baseMaps, null, { collapsed: false }).addTo(map);
 
-    let routePoints = [];
-    let markers = [];
-    let polyline = L.polyline([], { color: '#0056b3', weight: 5, opacity: 0.85 }).addTo(map);
+    let waypoints = [];       
+    let routeSegments = [];   
+    let markers = [];         
+    let polylineGroup = L.featureGroup().addTo(map); 
 
-    map.on('click', function(e) {
+    map.on('click', async function(e) {
       const lat = e.latlng.lat;
       const lng = e.latlng.lng;
-      const pointIndex = routePoints.length + 1;
+      const pointIndex = waypoints.length + 1;
 
-      routePoints.push([lat, lng]);
+      waypoints.push([lat, lng]);
 
       const marker = L.circleMarker([lat, lng], {
-        radius: 8,
+        radius: 9,
         fillColor: '#007bff',
         color: '#ffffff',
         weight: 2,
         opacity: 1,
-        fillOpacity: 0.9
+        fillOpacity: 0.95
       }).addTo(map);
 
-      marker.bindTooltip(`Punt ${pointIndex}`, { permanent: false, direction: 'top' });
+      marker.bindTooltip(`Knooppunt ${pointIndex}`, { permanent: true, direction: 'top', offset: [0, -8] });
       markers.push(marker);
+
+      if (waypoints.length > 1) {
+        document.getElementById('status').innerText = 'Fietspad berekenen naar nieuw knooppunt...';
+        const start = waypoints[waypoints.length - 2];
+        const end = waypoints[waypoints.length - 1];
+        
+        const segmentCoords = await fetchBikeRoute(start, end);
+        routeSegments.push(segmentCoords);
+      }
 
       updateMap();
     });
 
+    async function fetchBikeRoute(start, end) {
+      const url = `https://router.project-osrm.org/route/v1/biking/${start[1]},${start[0]};${end[1]},${end[0]}?overview=full&geometries=geojson`;
+      
+      try {
+        const response = await fetch(url);
+        const data = await response.json();
+
+        if (data.routes && data.routes.length > 0) {
+          return data.routes[0].geometry.coordinates.map(coord => [coord[1], coord[0]]);
+        }
+      } catch (err) {
+        console.error("Routing fout, terugvallen op rechte lijn:", err);
+      }
+      
+      return [start, end];
+    }
+
     function updateMap() {
-      polyline.setLatLngs(routePoints);
-      document.getElementById('info').innerText = `Aantal punten: ${routePoints.length}`;
+      polylineGroup.clearLayers();
+      let totalDistanceMeters = 0;
+
+      routeSegments.forEach(segment => {
+        const line = L.polyline(segment, { color: '#0056b3', weight: 5, opacity: 0.85 });
+        polylineGroup.addLayer(line);
+      });
+
+      const fullPath = getFullTrackPoints();
+      for (let i = 0; i < fullPath.length - 1; i++) {
+        totalDistanceMeters += L.latLng(fullPath[i]).distanceTo(L.latLng(fullPath[i + 1]));
+      }
+
+      const distanceKm = (totalDistanceMeters / 1000).toFixed(1);
+      document.getElementById('info').innerText = `Knooppunten: ${waypoints.length} | Afstand: ${distanceKm} km`;
+      document.getElementById('status').innerText = waypoints.length === 0 
+        ? 'Klik op de kaart om je eerste knooppunt aan te duiden...' 
+        : 'Klik op het volgende knooppunt...';
+    }
+
+    function getFullTrackPoints() {
+      if (waypoints.length === 0) return [];
+      if (waypoints.length === 1) return [waypoints[0]];
+
+      let fullPath = [];
+      routeSegments.forEach((segment, index) => {
+        if (index === 0) {
+          fullPath = fullPath.concat(segment);
+        } else {
+          fullPath = fullPath.concat(segment.slice(1));
+        }
+      });
+      return fullPath;
     }
 
     function undoLast() {
-      if (routePoints.length === 0) return;
-      routePoints.pop();
+      if (waypoints.length === 0) return;
+      
+      waypoints.pop();
       const lastMarker = markers.pop();
       map.removeLayer(lastMarker);
+
+      if (routeSegments.length > 0) {
+        routeSegments.pop();
+      }
+
       updateMap();
     }
 
     function clearAll() {
-      routePoints = [];
+      waypoints = [];
+      routeSegments = [];
       markers.forEach(m => map.removeLayer(m));
       markers = [];
       updateMap();
     }
 
+    // GPX Exporteren met aangepaste naam
     function downloadGPX() {
-      if (routePoints.length === 0) {
-        alert("Klik eerst op de kaart om een route samen te stellen.");
+      const fullTrack = getFullTrackPoints();
+
+      if (fullTrack.length === 0) {
+        alert("Klik eerst een paar knooppunten aan op de kaart.");
         return;
       }
 
-      const name = document.getElementById('routeName').value || "Knooppunten Route";
+      // Haal de naam op uit het invoerveld
+      let rawName = document.getElementById('routeName').value.trim();
+      if (!rawName) {
+        rawName = "Knooppunten_Route";
+      }
+
       const timestamp = new Date().toISOString();
 
       let gpx = `<?xml version="1.0" encoding="UTF-8"?>\n`;
       gpx += `<gpx version="1.1" creator="Fietsknooppunten GPX Maker" xmlns="http://www.topografix.com/GPX/1/1">\n`;
-      gpx += `  <metadata>\n    <name>${escapeXml(name)}</name>\n    <time>${timestamp}</time>\n  </metadata>\n`;
-      gpx += `  <trk>\n    <name>${escapeXml(name)}</name>\n    <trkseg>\n`;
+      gpx += `  <metadata>\n    <name>${escapeXml(rawName)}</name>\n    <time>${timestamp}</time>\n  </metadata>\n`;
+      
+      waypoints.forEach((wp, idx) => {
+        gpx += `  <wpt lat="${wp[0]}" lon="${wp[1]}">\n    <name>Knooppunt ${idx + 1}</name>\n  </wpt>\n`;
+      });
 
-      routePoints.forEach(pt => {
+      gpx += `  <trk>\n    <name>${escapeXml(rawName)}</name>\n    <trkseg>\n`;
+
+      fullTrack.forEach(pt => {
         gpx += `      <trkpt lat="${pt[0]}" lon="${pt[1]}"></trkpt>\n`;
       });
 
       gpx += `    </trkseg>\n  </trk>\n</gpx>`;
 
+      // Maak een schone bestandsnaam (vervang spacies en speciale tekens)
+      const fileName = rawName.toLowerCase().replace(/[^a-z0-9_]/gi, '_') + '.gpx';
+
       const blob = new Blob([gpx], { type: 'application/gpx+xml' });
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
-      link.download = `${name.toLowerCase().replace(/[^a-z0-9]/g, '_')}.gpx`;
+      link.download = fileName;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
