@@ -76,7 +76,7 @@
     <button class="btn-secondary" onclick="undoLast()">Laatste punt wissen</button>
     <button class="btn-danger" onclick="clearAll()">Alles wissen</button>
     <span id="info">Knooppunten: 0 | Afstand: 0 km</span>
-    <div id="status">Klik direct op een knooppuntnummer...</div>
+    <div id="status">Klik direct op een knooppuntnummer op de kaart...</div>
   </div>
 
   <div id="map"></div>
@@ -104,7 +104,7 @@
       const lat = e.latlng.lat;
       const lng = e.latlng.lng;
 
-      document.getElementById('status').innerText = 'Knooppunt zoeken...';
+      document.getElementById('status').innerText = 'Knooppunt identificeren...';
 
       const node = await getExactKnooppuntNode(lat, lng);
 
@@ -130,11 +130,11 @@
       markers.push(marker);
 
       if (waypoints.length > 1) {
-        document.getElementById('status').innerText = `Knooppuntenroute berekenen naar ${node.ref}...`;
+        document.getElementById('status').innerText = `Knooppuntroute ophalen van ${waypoints[waypoints.length - 2].ref} naar ${node.ref}...`;
         const start = waypoints[waypoints.length - 2];
         const end = waypoints[waypoints.length - 1];
         
-        const segmentCoords = await fetchKnooppuntenRoute([start.lat, start.lng], [end.lat, end.lng]);
+        const segmentCoords = await fetchStrictKnooppuntSegment(start, end);
         routeSegments.push(segmentCoords);
       }
 
@@ -159,35 +159,69 @@
             const dist = L.latLng(lat, lng).distanceTo(L.latLng(el.lat, el.lon));
             if (dist < minDistance) {
               minDistance = dist;
-              closest = { lat: el.lat, lng: el.lon, ref: el.tags.rcn_ref };
+              closest = { lat: el.lat, lng: el.lon, ref: el.tags.rcn_ref, id: el.id };
             }
           });
 
           if (minDistance < 300) return closest;
         }
       } catch (err) {
-        console.error("Fout:", err);
+        console.error("Fout bij knooppunt zoeken:", err);
       }
       return null;
     }
 
-    // Gebruikt BRouter met 'safety' profiel (voorkeur voor officiële fietspaden/knooppunten netwerk)
-    async function fetchKnooppuntenRoute(start, end) {
-      const url = `https://brouter.de/brouter?lon1=${start[1]}&lat1=${start[0]}&lon2=${end[1]}&lat2=${end[0]}&media=geojson&profile=safety`;
+    // Haalt exact de netwerkrelatie/lijnen op tussen de twee knooppunten uit OSM
+    async function fetchStrictKnooppuntSegment(startNode, endNode) {
+      const query = `[out:json][timeout:25];
+        (
+          relation["network"="rcn"]["type"="network"]
+            (around:500, ${startNode.lat}, ${startNode.lng})
+            (around:500, ${endNode.lat}, ${endNode.lng});
+        );
+        out body;
+        >;
+        out skel qt;`;
       
+      const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
+
       try {
         const response = await fetch(url);
         const data = await response.json();
 
-        if (data.features && data.features.length > 0) {
-          // BRouter geeft [lon, lat] terug, zet om naar [lat, lon]
-          return data.features[0].geometry.coordinates.map(coord => [coord[1], coord[0]]);
+        if (data.elements && data.elements.length > 0) {
+          const nodesMap = {};
+          const ways = [];
+
+          data.elements.forEach(el => {
+            if (el.type === 'node') {
+              nodesMap[el.id] = [el.lat, el.lon];
+            } else if (el.type === 'way') {
+              ways.push(el.nodes);
+            }
+          });
+
+          if (ways.length > 0) {
+            let points = [];
+            ways.forEach(wNodes => {
+              wNodes.forEach(nId => {
+                if (nodesMap[nId]) {
+                  points.push(nodesMap[nId]);
+                }
+              });
+            });
+
+            if (points.length > 0) {
+              return points;
+            }
+          }
         }
       } catch (err) {
-        console.error("BRouter fout:", err);
+        console.error("Netwerk ophalen mislukt, terugval op directe verbinding:", err);
       }
-      
-      return [[start[0], start[1]], [end[0], end[1]]];
+
+      // Fallback als er geen directe relatie gevonden wordt
+      return [[startNode.lat, startNode.lng], [endNode.lat, endNode.lng]];
     }
 
     function updateMap() {
