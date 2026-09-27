@@ -1,4 +1,4 @@
-<!DOCTYPE html> 
+<!DOCTYPE html>
 <html lang="nl">
 <head>
   <meta charset="UTF-8">
@@ -21,6 +21,7 @@
       gap: 12px;
       align-items: center;
       flex-wrap: wrap;
+      z-index: 1000;
     }
 
     input[type="text"] {
@@ -55,7 +56,7 @@
 <body>
 
   <div id="controls">
-    <input type="text" id="routeName" value="Fietsroute Knooppunten" placeholder="Routenaam">
+    <input type="text" id="routeName" value="Knooppunten Route" placeholder="Routenaam">
     <button class="btn-primary" onclick="downloadGPX()">Download GPX</button>
     <button class="btn-secondary" onclick="undoLast()">Laatste punt wissen</button>
     <button class="btn-danger" onclick="clearAll()">Alles wissen</button>
@@ -65,20 +66,39 @@
   <div id="map"></div>
 
   <script>
-    // Initialiseer de kaart (standaard gecentreerd op Vlaanderen / Nederland grens)
-    const map = L.map('map').setView([51.3, 4.85], 11);
+    // Initialiseer de kaart op Beerse / Kempen regio
+    const map = L.map('map').setView([51.318, 4.858], 13);
 
-    // OpenStreetMap Fietspad / Cycle Layer (OpenCycleMap / Standard OSM)
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+    // CyclOSM - Geïntegreerde fiets- & knooppuntenkaart (werkt uitstekend op GitHub Pages)
+    const cyclosm = L.tileLayer('https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', {
+      maxZoom: 18,
+      attribution: '<a href="https://www.cyclosm.org">CyclOSM</a> | OpenStreetMap'
     }).addTo(map);
+
+    // OpenFietsMap Nederland/België
+    const openfietsmap = L.tileLayer('https://tile.openstreetmap.de/{z}/{x}/{y}.png', {
+      maxZoom: 18,
+      attribution: 'OpenStreetMap DE'
+    });
+
+    // Standaard OSM
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: 'OpenStreetMap'
+    });
+
+    // Schakelaar voor kaartlagen rechtsboven
+    const baseMaps = {
+      "Fietskaart (CyclOSM met knooppunten)": cyclosm,
+      "Standaard Fietskaart": openfietsmap,
+      "OpenStreetMap Standaard": osm
+    };
+    L.control.layers(baseMaps, null, { collapsed: false }).addTo(map);
 
     let routePoints = [];
     let markers = [];
-    let polyline = L.polyline([], { color: '#007bff', weight: 5, opacity: 0.8 }).addTo(map);
+    let polyline = L.polyline([], { color: '#0056b3', weight: 5, opacity: 0.85 }).addTo(map);
 
-    // Klik op de kaart om een knooppunt / waypoint toe te voegen
     map.on('click', function(e) {
       const lat = e.latlng.lat;
       const lng = e.latlng.lng;
@@ -86,9 +106,8 @@
 
       routePoints.push([lat, lng]);
 
-      // Maak een custom genummerde marker op de kaart
       const marker = L.circleMarker([lat, lng], {
-        radius: 9,
+        radius: 8,
         fillColor: '#007bff',
         color: '#ffffff',
         weight: 2,
@@ -122,14 +141,13 @@
       updateMap();
     }
 
-    // Genereer en download het GPX bestand voor Bosch Flow App
     function downloadGPX() {
       if (routePoints.length === 0) {
-        alert("Klik eerst een paar punten op de kaart om een route te maken.");
+        alert("Klik eerst op de kaart om een route samen te stellen.");
         return;
       }
 
-      const name = document.getElementById('routeName').value || "Fietsroute";
+      const name = document.getElementById('routeName').value || "Knooppunten Route";
       const timestamp = new Date().toISOString();
 
       let gpx = `<?xml version="1.0" encoding="UTF-8"?>\n`;
@@ -163,6 +181,7 @@
         }
       });
     }
+
 // AUTOMATISCHE OFFLINE BEWAREN
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
