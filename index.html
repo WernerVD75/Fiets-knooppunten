@@ -3,8 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Fietsknooppunten GPX Maker</title>
+  <title>Fietsknooppunten GPX Maker voor Bosch</title>
   
+  <!-- Leaflet CSS & JS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
@@ -89,6 +90,7 @@
       attribution: '© OpenStreetMap contributors'
     }).addTo(map);
 
+    // Knooppuntennetwerk laag
     L.tileLayer('https://tile.waymarkedtrails.org/cycling/{z}/{x}/{y}.png', {
       maxZoom: 19,
       opacity: 0.9,
@@ -104,12 +106,12 @@
       const lat = e.latlng.lat;
       const lng = e.latlng.lng;
 
-      document.getElementById('status').innerText = 'Knooppunt identificeren...';
+      document.getElementById('status').innerText = 'Knooppunt zoeken...';
 
       const node = await getExactKnooppuntNode(lat, lng);
 
       if (!node) {
-        document.getElementById('status').innerText = '❌ Klik op een knooppuntnummer op de kaart!';
+        document.getElementById('status').innerText = '❌ Klik rechtstreeks op een blauw knooppuntnummer op de kaart.';
         return;
       }
 
@@ -130,7 +132,7 @@
       markers.push(marker);
 
       if (waypoints.length > 1) {
-        document.getElementById('status').innerText = `Knooppuntenroute berekenen naar ${node.ref}...`;
+        document.getElementById('status').innerText = `Fietsroute berekenen naar knooppunt ${node.ref}...`;
         const start = waypoints[waypoints.length - 2];
         const end = waypoints[waypoints.length - 1];
         
@@ -163,7 +165,7 @@
             }
           });
 
-          if (minDistance < 300) return closest;
+          if (minDistance < 350) return closest;
         }
       } catch (err) {
         console.error("Fout bij knooppunt zoeken:", err);
@@ -171,6 +173,7 @@
       return null;
     }
 
+    // Aangepast: BRouter met juiste lat,lon parameters & cyclenetwork profiel
     async function fetchStrictKnooppuntSegment(startNode, endNode) {
       const url = `https://brouter.de/brouter?lon1=${startNode.lng}&lat1=${startNode.lat}&lon2=${endNode.lng}&lat2=${endNode.lat}&media=geojson&profile=cyclenetwork`;
 
@@ -179,10 +182,11 @@
         const data = await response.json();
 
         if (data.features && data.features.length > 0) {
+          // BRouter geeft [lon, lat] terug. Omzetten naar Leaflet [lat, lon]
           return data.features[0].geometry.coordinates.map(coord => [coord[1], coord[0]]);
         }
       } catch (err) {
-        console.error("Fout bij BRouter:", err);
+        console.error("BRouter routing fout:", err);
       }
 
       return [[startNode.lat, startNode.lng], [endNode.lat, endNode.lng]];
@@ -243,12 +247,12 @@
       updateMap();
     }
 
-    // AANGEPASTE GPX EXPORT SPECIAAL VOOR BOSCH FLOW APP
+    // GPX EXPORT WAARIN ZOWEL TRACK ALS ROUTE/VIA-PUNTEN ZITTEN VOOR BOSCH FLOW
     function downloadGPX() {
       const fullTrack = getFullTrackPoints();
 
       if (fullTrack.length === 0) {
-        alert("Klik eerst een paar knooppunten aan op de kaart.");
+        alert("Klik eerst op een aantal knooppunten op de kaart.");
         return;
       }
 
@@ -259,25 +263,26 @@
       gpx += `<gpx version="1.1" creator="Fietsknooppunten GPX Maker" xmlns="http://www.topografix.com/GPX/1/1">\n`;
       gpx += `  <metadata>\n    <name>${escapeXml(rawName)}</name>\n    <time>${timestamp}</time>\n  </metadata>\n`;
       
-      // Sluit knooppunten in als waypoints
+      // Waypoints met knooppuntnummers
       waypoints.forEach((wp) => {
         gpx += `  <wpt lat="${wp.lat}" lon="${wp.lng}">\n    <name>Knooppunt ${wp.ref}</name>\n  </wpt>\n`;
       });
 
-      // Voeg ook tussenliggende trackpoints als extra stuurpunten toe voor de Bosch Flow app
-      gpx += `  <trk>\n    <name>${escapeXml(rawName)}</name>\n    <trkseg>\n`;
-
-      fullTrack.forEach((pt, index) => {
-        gpx += `      <trkpt lat="${pt[0]}" lon="${pt[1]}">\n`;
-        // Voeg voor het eerste en laatste punt en elk 10e punt een naam toe om herberekening door Bosch te voorkomen
-        if (index === 0) {
-          gpx += `        <name>Start</name>\n`;
-        } else if (index === fullTrack.length - 1) {
-          gpx += `        <name>Finish</name>\n`;
+      // Route met tussenliggende stuurpunten (dwingt Bosch Flow om de exacte weg te volgen)
+      gpx += `  <rte>\n    <name>${escapeXml(rawName)}</name>\n`;
+      fullTrack.forEach((pt, idx) => {
+        // Schrijf om de paar punten een routepunt om herberekening in Bosch te voorkomen
+        if (idx === 0 || idx === fullTrack.length - 1 || idx % 5 === 0) {
+          gpx += `    <rtept lat="${pt[0]}" lon="${pt[1]}"></rtept>\n`;
         }
-        gpx += `      </trkpt>\n`;
       });
+      gpx += `  </rte>\n`;
 
+      // Spoor (Track)
+      gpx += `  <trk>\n    <name>${escapeXml(rawName)}</name>\n    <trkseg>\n`;
+      fullTrack.forEach(pt => {
+        gpx += `      <trkpt lat="${pt[0]}" lon="${pt[1]}"></trkpt>\n`;
+      });
       gpx += `    </trkseg>\n  </trk>\n</gpx>`;
 
       const fileName = rawName.toLowerCase().replace(/[^a-z0-9_]/gi, '_') + '.gpx';
