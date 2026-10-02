@@ -1,11 +1,10 @@
-<!DOCTYPE html> 
+<!DOCTYPE html>
 <html lang="nl">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Fietsknooppunten GPX Maker</title>
   
-  <!-- Leaflet CSS & JS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
@@ -42,21 +41,16 @@
       border: none;
       border-radius: 6px;
       cursor: pointer;
-      transition: background-color 0.2s;
     }
 
     .btn-primary { background-color: #007bff; color: white; }
-    .btn-primary:hover { background-color: #0056b3; }
     .btn-secondary { background-color: #6c757d; color: white; }
-    .btn-secondary:hover { background-color: #545b62; }
     .btn-danger { background-color: #dc3545; color: white; }
-    .btn-danger:hover { background-color: #bd2130; }
 
     #info { font-size: 14px; color: #495057; margin-left: auto; font-weight: bold; }
     #status { font-size: 13px; color: #28a745; width: 100%; margin-top: -4px; font-weight: 600; }
     #map { flex: 1; width: 100%; }
     
-    /* Styling voor actieve knooppunt-badges */
     .knooppunt-badge {
       background-color: #007bff;
       color: white;
@@ -88,16 +82,13 @@
   <div id="map"></div>
 
   <script>
-    // Start gecentreerd op Beerse / Kempen
     const map = L.map('map').setView([51.318, 4.858], 13);
 
-    // Standaard basiskaart
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution: '© OpenStreetMap contributors'
     }).addTo(map);
 
-    // Bovenlaag met het visuele knooppuntennetwerk (Waymarked Trails)
     L.tileLayer('https://tile.waymarkedtrails.org/cycling/{z}/{x}/{y}.png', {
       maxZoom: 19,
       opacity: 0.9,
@@ -109,30 +100,25 @@
     let markers = [];         
     let polylineGroup = L.featureGroup().addTo(map);
 
-    // Klikken op de kaart
     map.on('click', async function(e) {
       const lat = e.latlng.lat;
       const lng = e.latlng.lng;
 
       document.getElementById('status').innerText = 'Knooppunt identificeren...';
 
-      // Haal het exacte knooppunt op
       const node = await getExactKnooppuntNode(lat, lng);
 
       if (!node) {
-        document.getElementById('status').innerText = '❌ Klik rechtstreeks op een knooppuntnummer op de kaart!';
+        document.getElementById('status').innerText = '❌ Klik op een knooppuntnummer op de kaart!';
         return;
       }
 
-      // Voorkom dubbel aanklikken van hetzelfde knooppunt achter elkaar
       if (waypoints.length > 0 && waypoints[waypoints.length - 1].ref === node.ref) {
-        document.getElementById('status').innerText = `Knooppunt ${node.ref} is al gekozen als laatste punt.`;
         return;
       }
 
       waypoints.push(node);
 
-      // Plaats een blauwe badge met het echte knooppuntnummer
       const customIcon = L.divIcon({
         className: 'knooppunt-badge',
         html: node.ref,
@@ -155,7 +141,6 @@
       updateMap();
     });
 
-    // Haalt de gegevens van het geklikte knooppunt op via Overpass API
     async function getExactKnooppuntNode(lat, lng) {
       const delta = 0.004;
       const bbox = `${lat - delta},${lng - delta},${lat + delta},${lng + delta}`;
@@ -178,7 +163,6 @@
             }
           });
 
-          // Alleen accepteren als er binnen 300m geklikt is
           if (minDistance < 300) return closest;
         }
       } catch (err) {
@@ -187,7 +171,6 @@
       return null;
     }
 
-    // Gebruikt BRouter met het 'cyclenetwork' profiel om strikt het knooppuntennetwerk te volgen
     async function fetchStrictKnooppuntSegment(startNode, endNode) {
       const url = `https://brouter.de/brouter?lon1=${startNode.lng}&lat1=${startNode.lat}&lon2=${endNode.lng}&lat2=${endNode.lat}&media=geojson&profile=cyclenetwork`;
 
@@ -196,14 +179,12 @@
         const data = await response.json();
 
         if (data.features && data.features.length > 0) {
-          // Zet [lon, lat] om naar Leaflet [lat, lon]
           return data.features[0].geometry.coordinates.map(coord => [coord[1], coord[0]]);
         }
       } catch (err) {
-        console.error("Fout bij ophalen knooppuntenroute via BRouter:", err);
+        console.error("Fout bij BRouter:", err);
       }
 
-      // Fallback naar directe lijn als er geen route gevonden kan worden
       return [[startNode.lat, startNode.lng], [endNode.lat, endNode.lng]];
     }
 
@@ -226,8 +207,8 @@
       
       document.getElementById('info').innerText = `Knooppunten: ${waypoints.length} | Afstand: ${distanceKm} km`;
       document.getElementById('status').innerText = waypoints.length === 0 
-        ? 'Klik op een knooppuntnummer op de kaart...' 
-        : `✔ Knooppunt ${lastWp.ref} toegevoegd. Klik op het volgende knooppunt...`;
+        ? 'Klik op een knooppuntnummer...' 
+        : `✔ Knooppunt ${lastWp.ref} toegevoegd.`;
     }
 
     function getFullTrackPoints() {
@@ -250,10 +231,7 @@
       waypoints.pop();
       const lastMarker = markers.pop();
       map.removeLayer(lastMarker);
-
-      if (routeSegments.length > 0) {
-        routeSegments.pop();
-      }
+      if (routeSegments.length > 0) routeSegments.pop();
       updateMap();
     }
 
@@ -265,6 +243,7 @@
       updateMap();
     }
 
+    // AANGEPASTE GPX EXPORT SPECIAAL VOOR BOSCH FLOW APP
     function downloadGPX() {
       const fullTrack = getFullTrackPoints();
 
@@ -280,15 +259,23 @@
       gpx += `<gpx version="1.1" creator="Fietsknooppunten GPX Maker" xmlns="http://www.topografix.com/GPX/1/1">\n`;
       gpx += `  <metadata>\n    <name>${escapeXml(rawName)}</name>\n    <time>${timestamp}</time>\n  </metadata>\n`;
       
-      // Opslaan van de waypoints met hun echte knooppuntnummer
+      // Sluit knooppunten in als waypoints
       waypoints.forEach((wp) => {
         gpx += `  <wpt lat="${wp.lat}" lon="${wp.lng}">\n    <name>Knooppunt ${wp.ref}</name>\n  </wpt>\n`;
       });
 
+      // Voeg ook tussenliggende trackpoints als extra stuurpunten toe voor de Bosch Flow app
       gpx += `  <trk>\n    <name>${escapeXml(rawName)}</name>\n    <trkseg>\n`;
 
-      fullTrack.forEach(pt => {
-        gpx += `      <trkpt lat="${pt[0]}" lon="${pt[1]}"></trkpt>\n`;
+      fullTrack.forEach((pt, index) => {
+        gpx += `      <trkpt lat="${pt[0]}" lon="${pt[1]}">\n`;
+        // Voeg voor het eerste en laatste punt en elk 10e punt een naam toe om herberekening door Bosch te voorkomen
+        if (index === 0) {
+          gpx += `        <name>Start</name>\n`;
+        } else if (index === fullTrack.length - 1) {
+          gpx += `        <name>Finish</name>\n`;
+        }
+        gpx += `      </trkpt>\n`;
       });
 
       gpx += `    </trkseg>\n  </trk>\n</gpx>`;
@@ -315,7 +302,6 @@
         }
       });
     }
-
 
 // AUTOMATISCHE OFFLINE BEWAREN
         if ('serviceWorker' in navigator) {
