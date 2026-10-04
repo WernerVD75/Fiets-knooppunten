@@ -94,6 +94,7 @@
       attribution: '© OpenStreetMap contributors'
     }).addTo(map);
 
+    // Knooppuntennetwerk overlay
     L.tileLayer('https://tile.waymarkedtrails.org/cycling/{z}/{x}/{y}.png', {
       maxZoom: 19,
       opacity: 0.85,
@@ -106,16 +107,13 @@
     let markers = [];         
     let polylineGroup = L.featureGroup().addTo(map);
 
-    // Lijst met alle mogelijke bestandsnamen en URLs (lokaal + GitHub fallback)
     const fileCandidates = [
       "knooppunten.txt",
       "knooppunten.csv",
       "knooppunten.txt.txt",
       "knooppunten.csv.txt",
       "https://raw.githubusercontent.com/wernervd75/Fiets-knooppunten/main/knooppunten.txt",
-      "https://raw.githubusercontent.com/wernervd75/Fiets-knooppunten/main/knooppunten.csv",
-      "https://raw.githubusercontent.com/wernervd75/Fiets-knooppunten/master/knooppunten.txt",
-      "https://raw.githubusercontent.com/wernervd75/Fiets-knooppunten/master/knooppunten.csv"
+      "https://raw.githubusercontent.com/wernervd75/Fiets-knooppunten/main/knooppunten.csv"
     ];
 
     function tryNextFile(index) {
@@ -143,17 +141,14 @@
               return;
             }
           }
-          // Indien leeg of ongeldig, probeer het volgende bestand
           tryNextFile(index + 1);
         },
         error: function() {
-          // Bij fout (bv. 404), probeer de volgende optie uit de lijst
           tryNextFile(index + 1);
         }
       });
     }
 
-    // Start het zoekproces
     tryNextFile(0);
 
     map.on('click', async function(e) {
@@ -191,7 +186,7 @@
 
       if (waypoints.length > 1) {
         const statusEl = document.getElementById('status');
-        statusEl.innerText = `Fietspad berekenen naar knooppunt ${node.ref}...`;
+        statusEl.innerText = `Fietsnetwerk berekenen naar knooppunt ${node.ref}...`;
         statusEl.classList.add('ok');
 
         const start = waypoints[waypoints.length - 2];
@@ -220,18 +215,35 @@
       return minDistance < 400 ? closest : null;
     }
 
+    // AANGEPAST: Gebruikt BRouter speciaal afgesteld op het FIETSNETWERK (safety profile)
     async function fetchCyclingRoute(startNode, endNode) {
-      const url = `https://router.project-osrm.org/route/v1/bike/${startNode.lon},${startNode.lat};${endNode.lon},${endNode.lat}?overview=full&geometries=geojson`;
+      // BRouter fietsnetwerk profiel
+      const brouterUrl = `https://brouter.de/brouter?lonlats=${startNode.lon},${startNode.lat}|${endNode.lon},${endNode.lat}&profile=safety&format=geojson`;
 
       try {
-        const response = await fetch(url);
+        const response = await fetch(brouterUrl);
+        const data = await response.json();
+
+        if (data.features && data.features.length > 0) {
+          const coords = data.features[0].geometry.coordinates;
+          // BRouter geeft [lon, lat, elev] -> omzetten naar Leaflet [lat, lon]
+          return coords.map(c => [c[1], c[0]]);
+        }
+      } catch (err) {
+        console.warn("BRouter traag, schakelt over naar OSRM fallback:", err);
+      }
+
+      // Secondary Fallback: OSRM
+      const osrmUrl = `https://router.project-osrm.org/route/v1/bike/${startNode.lon},${startNode.lat};${endNode.lon},${endNode.lat}?overview=full&geometries=geojson`;
+      try {
+        const response = await fetch(osrmUrl);
         const data = await response.json();
 
         if (data.routes && data.routes.length > 0) {
           return data.routes[0].geometry.coordinates.map(coord => [coord[1], coord[0]]);
         }
       } catch (err) {
-        console.error("Fout bij OSRM routing:", err);
+        console.error("Routing mislukt:", err);
       }
 
       return [[startNode.lat, startNode.lon], [endNode.lat, endNode.lon]];
@@ -347,7 +359,6 @@
         }
       });
     }
-
 
 // AUTOMATISCHE OFFLINE BEWAREN
         if ('serviceWorker' in navigator) {
