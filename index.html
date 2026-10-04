@@ -106,26 +106,55 @@
     let markers = [];         
     let polylineGroup = L.featureGroup().addTo(map);
 
-    // We laden nu direct knooppunten.txt
-    Papa.parse("knooppunten.txt", {
-      download: true,
-      skipEmptyLines: true,
-      complete: function(results) {
-        allNodes = results.data.map(row => ({
-          lon: parseFloat(row[0]),
-          lat: parseFloat(row[1]),
-          ref: row[2] ? row[2].toString().trim() : '',
-          region: row[3] ? row[3].trim() : ''
-        })).filter(n => !isNaN(n.lat) && !isNaN(n.lon));
+    // Lijst met alle mogelijke bestandsnamen en URLs (lokaal + GitHub fallback)
+    const fileCandidates = [
+      "knooppunten.txt",
+      "knooppunten.csv",
+      "knooppunten.txt.txt",
+      "knooppunten.csv.txt",
+      "https://raw.githubusercontent.com/wernervd75/Fiets-knooppunten/main/knooppunten.txt",
+      "https://raw.githubusercontent.com/wernervd75/Fiets-knooppunten/main/knooppunten.csv",
+      "https://raw.githubusercontent.com/wernervd75/Fiets-knooppunten/master/knooppunten.txt",
+      "https://raw.githubusercontent.com/wernervd75/Fiets-knooppunten/master/knooppunten.csv"
+    ];
 
-        const statusEl = document.getElementById('status');
-        statusEl.innerText = `✔ ${allNodes.length.toLocaleString()} knooppunten geladen. Klik op een knooppunt...`;
-        statusEl.classList.add('ok');
-      },
-      error: function(err) {
-        document.getElementById('status').innerText = '❌ Kon knooppunten.txt niet laden. Zorg dat knooppunten.txt op GitHub staat.';
+    function tryNextFile(index) {
+      if (index >= fileCandidates.length) {
+        document.getElementById('status').innerText = '❌ Kon knooppuntenbestand niet laden op GitHub. Controleer of het bestand in de hoofdmap staat.';
+        return;
       }
-    });
+
+      Papa.parse(fileCandidates[index], {
+        download: true,
+        skipEmptyLines: true,
+        complete: function(results) {
+          if (results.data && results.data.length > 0) {
+            allNodes = results.data.map(row => ({
+              lon: parseFloat(row[0]),
+              lat: parseFloat(row[1]),
+              ref: row[2] ? row[2].toString().trim() : '',
+              region: row[3] ? row[3].trim() : ''
+            })).filter(n => !isNaN(n.lat) && !isNaN(n.lon));
+
+            if (allNodes.length > 0) {
+              const statusEl = document.getElementById('status');
+              statusEl.innerText = `✔ ${allNodes.length.toLocaleString()} knooppunten geladen. Klik op een knooppunt op de kaart...`;
+              statusEl.classList.add('ok');
+              return;
+            }
+          }
+          // Indien leeg of ongeldig, probeer het volgende bestand
+          tryNextFile(index + 1);
+        },
+        error: function() {
+          // Bij fout (bv. 404), probeer de volgende optie uit de lijst
+          tryNextFile(index + 1);
+        }
+      });
+    }
+
+    // Start het zoekproces
+    tryNextFile(0);
 
     map.on('click', async function(e) {
       if (allNodes.length === 0) {
