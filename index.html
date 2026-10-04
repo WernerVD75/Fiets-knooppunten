@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-  <!-- PapaParse voor het razendsnel inlezen van knooppunten.csv -->
+  <!-- PapaParse voor het razendsnel inlezen van knooppunten -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 
   <style>
@@ -106,38 +106,26 @@
     let markers = [];         
     let polylineGroup = L.featureGroup().addTo(map);
 
-    // Slimme lader met automatische fallback
-    const primaryUrl = "knooppunten.csv";
-    const fallbackUrl = "https://raw.githubusercontent.com/wernervd75/Fiets-knooppunten/main/knooppunten.csv";
+    // We laden nu direct knooppunten.txt
+    Papa.parse("knooppunten.txt", {
+      download: true,
+      skipEmptyLines: true,
+      complete: function(results) {
+        allNodes = results.data.map(row => ({
+          lon: parseFloat(row[0]),
+          lat: parseFloat(row[1]),
+          ref: row[2] ? row[2].toString().trim() : '',
+          region: row[3] ? row[3].trim() : ''
+        })).filter(n => !isNaN(n.lat) && !isNaN(n.lon));
 
-    function loadCSV(url, isRetry = false) {
-      Papa.parse(url, {
-        download: true,
-        skipEmptyLines: true,
-        complete: function(results) {
-          allNodes = results.data.map(row => ({
-            lon: parseFloat(row[0]),
-            lat: parseFloat(row[1]),
-            ref: row[2] ? row[2].toString().trim() : '',
-            region: row[3] ? row[3].trim() : ''
-          })).filter(n => !isNaN(n.lat) && !isNaN(n.lon));
-
-          const statusEl = document.getElementById('status');
-          statusEl.innerText = `✔ ${allNodes.length.toLocaleString()} knooppunten geladen. Klik op een knooppunt...`;
-          statusEl.classList.add('ok');
-        },
-        error: function() {
-          if (!isRetry) {
-            console.log("Lokaal laden mislukt, probeer via GitHub Raw fallback...");
-            loadCSV(fallbackUrl, true);
-          } else {
-            document.getElementById('status').innerText = '❌ Kon knooppunten.csv niet laden. Controleer de bestandsnaam op GitHub.';
-          }
-        }
-      });
-    }
-
-    loadCSV(primaryUrl);
+        const statusEl = document.getElementById('status');
+        statusEl.innerText = `✔ ${allNodes.length.toLocaleString()} knooppunten geladen. Klik op een knooppunt...`;
+        statusEl.classList.add('ok');
+      },
+      error: function(err) {
+        document.getElementById('status').innerText = '❌ Kon knooppunten.txt niet laden. Zorg dat knooppunten.txt op GitHub staat.';
+      }
+    });
 
     map.on('click', async function(e) {
       if (allNodes.length === 0) {
