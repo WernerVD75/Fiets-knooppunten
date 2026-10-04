@@ -94,7 +94,6 @@
       attribution: '© OpenStreetMap contributors'
     }).addTo(map);
 
-    // Fietskaart overlay
     L.tileLayer('https://tile.waymarkedtrails.org/cycling/{z}/{x}/{y}.png', {
       maxZoom: 19,
       opacity: 0.85,
@@ -107,29 +106,39 @@
     let markers = [];         
     let polylineGroup = L.featureGroup().addTo(map);
 
-    // 1. Laad het knooppunten.csv bestand direct in het geheugen
-    Papa.parse("knooppunten.csv", {
-      download: true,
-      skipEmptyLines: true,
-      complete: function(results) {
-        // Structuur: col 0 = lon, col 1 = lat, col 2 = nummer, col 3 = regio
-        allNodes = results.data.map(row => ({
-          lon: parseFloat(row[0]),
-          lat: parseFloat(row[1]),
-          ref: row[2].toString().trim(),
-          region: row[3] ? row[3].trim() : ''
-        })).filter(n => !isNaN(n.lat) && !isNaN(n.lon));
+    // Slimme lader met automatische fallback
+    const primaryUrl = "knooppunten.csv";
+    const fallbackUrl = "https://raw.githubusercontent.com/wernervd75/Fiets-knooppunten/main/knooppunten.csv";
 
-        const statusEl = document.getElementById('status');
-        statusEl.innerText = `✔ ${allNodes.length.toLocaleString()} knooppunten geladen. Klik op een knooppunt...`;
-        statusEl.classList.add('ok');
-      },
-      error: function() {
-        document.getElementById('status').innerText = '❌ Kon knooppunten.csv niet laden. Controleer of het bestand op GitHub staat.';
-      }
-    });
+    function loadCSV(url, isRetry = false) {
+      Papa.parse(url, {
+        download: true,
+        skipEmptyLines: true,
+        complete: function(results) {
+          allNodes = results.data.map(row => ({
+            lon: parseFloat(row[0]),
+            lat: parseFloat(row[1]),
+            ref: row[2] ? row[2].toString().trim() : '',
+            region: row[3] ? row[3].trim() : ''
+          })).filter(n => !isNaN(n.lat) && !isNaN(n.lon));
 
-    // 2. Klik op de kaart om het dichtstbijzijnde knooppunt uit de CSV te pakken
+          const statusEl = document.getElementById('status');
+          statusEl.innerText = `✔ ${allNodes.length.toLocaleString()} knooppunten geladen. Klik op een knooppunt...`;
+          statusEl.classList.add('ok');
+        },
+        error: function() {
+          if (!isRetry) {
+            console.log("Lokaal laden mislukt, probeer via GitHub Raw fallback...");
+            loadCSV(fallbackUrl, true);
+          } else {
+            document.getElementById('status').innerText = '❌ Kon knooppunten.csv niet laden. Controleer de bestandsnaam op GitHub.';
+          }
+        }
+      });
+    }
+
+    loadCSV(primaryUrl);
+
     map.on('click', async function(e) {
       if (allNodes.length === 0) {
         alert("Knooppunten zijn nog bezig met laden...");
@@ -178,7 +187,6 @@
       updateMap();
     });
 
-    // Zoekt in de geladen CSV binnen een straal van max 400 meter
     function findClosestNode(lat, lng) {
       let closest = null;
       let minDistance = Infinity;
@@ -195,7 +203,6 @@
       return minDistance < 400 ? closest : null;
     }
 
-    // 3. OSRM Cycling API: Berekent de route exact over fietspaden
     async function fetchCyclingRoute(startNode, endNode) {
       const url = `https://router.project-osrm.org/route/v1/bike/${startNode.lon},${startNode.lat};${endNode.lon},${endNode.lat}?overview=full&geometries=geojson`;
 
@@ -204,14 +211,12 @@
         const data = await response.json();
 
         if (data.routes && data.routes.length > 0) {
-          // OSRM geeft [lon, lat] -> omzetten naar Leaflet [lat, lon]
           return data.routes[0].geometry.coordinates.map(coord => [coord[1], coord[0]]);
         }
       } catch (err) {
         console.error("Fout bij OSRM routing:", err);
       }
 
-      // Fallback als de server niet antwoordt
       return [[startNode.lat, startNode.lon], [endNode.lat, endNode.lon]];
     }
 
@@ -270,7 +275,6 @@
       updateMap();
     }
 
-    // GPX Exporteren voor Bosch Flow App
     function downloadGPX() {
       const fullTrack = getFullTrackPoints();
 
@@ -286,12 +290,10 @@
       gpx += `<gpx version="1.1" creator="Fietsknooppunten GPX Maker" xmlns="http://www.topografix.com/GPX/1/1">\n`;
       gpx += `  <metadata>\n    <name>${escapeXml(rawName)}</name>\n    <time>${timestamp}</time>\n  </metadata>\n`;
       
-      // Waypoints (Knooppunten)
       waypoints.forEach((wp) => {
         gpx += `  <wpt lat="${wp.lat}" lon="${wp.lon}">\n    <name>KP ${wp.ref}</name>\n  </wpt>\n`;
       });
 
-      // Routepunten (Dwingt Bosch om het fietspad exact te volgen)
       gpx += `  <rte>\n    <name>${escapeXml(rawName)}</name>\n`;
       fullTrack.forEach((pt, idx) => {
         if (idx === 0 || idx === fullTrack.length - 1 || idx % 4 === 0) {
@@ -300,7 +302,6 @@
       });
       gpx += `  </rte>\n`;
 
-      // Spoor (Track)
       gpx += `  <trk>\n    <name>${escapeXml(rawName)}</name>\n    <trkseg>\n`;
       fullTrack.forEach(pt => {
         gpx += `      <trkpt lat="${pt[0]}" lon="${pt[1]}"></trkpt>\n`;
