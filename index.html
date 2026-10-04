@@ -5,8 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Fietsknooppunten GPX Maker voor Bosch</title>
   
+  <!-- Leaflet CSS & JS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- PapaParse voor het razendsnel inlezen van knooppunten.csv -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -48,7 +52,8 @@
     .btn-danger { background-color: #dc3545; color: white; }
 
     #info { font-size: 14px; color: #495057; margin-left: auto; font-weight: bold; }
-    #status { font-size: 13px; color: #28a745; width: 100%; margin-top: -4px; font-weight: 600; }
+    #status { font-size: 13px; color: #d9534f; width: 100%; margin-top: -4px; font-weight: 600; }
+    #status.ok { color: #28a745; }
     #map { flex: 1; width: 100%; }
     
     .knooppunt-badge {
@@ -58,7 +63,7 @@
       border-radius: 50%;
       text-align: center;
       font-weight: bold;
-      font-size: 13px;
+      font-size: 12px;
       line-height: 24px;
       box-shadow: 0 2px 5px rgba(0,0,0,0.4);
     }
@@ -76,7 +81,7 @@
     <button class="btn-secondary" onclick="undoLast()">Laatste punt wissen</button>
     <button class="btn-danger" onclick="clearAll()">Alles wissen</button>
     <span id="info">Knooppunten: 0 | Afstand: 0 km</span>
-    <div id="status">Klik op een knooppuntnummer op de kaart...</div>
+    <div id="status">Knooppuntenbestand laden...</div>
   </div>
 
   <div id="map"></div>
@@ -89,31 +94,60 @@
       attribution: '© OpenStreetMap contributors'
     }).addTo(map);
 
+    // Fietskaart overlay
     L.tileLayer('https://tile.waymarkedtrails.org/cycling/{z}/{x}/{y}.png', {
       maxZoom: 19,
-      opacity: 0.9,
+      opacity: 0.85,
       attribution: '© Waymarked Trails'
     }).addTo(map);
 
+    let allNodes = [];
     let waypoints = [];       
     let routeSegments = [];   
     let markers = [];         
     let polylineGroup = L.featureGroup().addTo(map);
 
+    // 1. Laad het knooppunten.csv bestand direct in het geheugen
+    Papa.parse("knooppunten.csv", {
+      download: true,
+      skipEmptyLines: true,
+      complete: function(results) {
+        // Structuur: col 0 = lon, col 1 = lat, col 2 = nummer, col 3 = regio
+        allNodes = results.data.map(row => ({
+          lon: parseFloat(row[0]),
+          lat: parseFloat(row[1]),
+          ref: row[2].toString().trim(),
+          region: row[3] ? row[3].trim() : ''
+        })).filter(n => !isNaN(n.lat) && !isNaN(n.lon));
+
+        const statusEl = document.getElementById('status');
+        statusEl.innerText = `✔ ${allNodes.length.toLocaleString()} knooppunten geladen. Klik op een knooppunt...`;
+        statusEl.classList.add('ok');
+      },
+      error: function() {
+        document.getElementById('status').innerText = '❌ Kon knooppunten.csv niet laden. Controleer of het bestand op GitHub staat.';
+      }
+    });
+
+    // 2. Klik op de kaart om het dichtstbijzijnde knooppunt uit de CSV te pakken
     map.on('click', async function(e) {
-      const lat = e.latlng.lat;
-      const lng = e.latlng.lng;
-
-      document.getElementById('status').innerText = 'Knooppunt identificeren...';
-
-      const node = await getExactKnooppuntNode(lat, lng);
-
-      if (!node) {
-        document.getElementById('status').innerText = '❌ Klik op een blauw knooppuntnummer op de kaart.';
+      if (allNodes.length === 0) {
+        alert("Knooppunten zijn nog bezig met laden...");
         return;
       }
 
-      if (waypoints.length > 0 && waypoints[waypoints.length - 1].ref === node.ref) {
+      const lat = e.latlng.lat;
+      const lng = e.latlng.lng;
+
+      const node = findClosestNode(lat, lng);
+
+      if (!node) {
+        document.getElementById('status').innerText = '❌ Geen knooppunt dichtbij gevonden.';
+        return;
+      }
+
+      if (waypoints.length > 0 && waypoints[waypoints.length - 1].ref === node.ref && 
+          waypoints[waypoints.length - 1].lat === node.lat) {
         return;
       }
 
@@ -122,71 +156,63 @@
       const customIcon = L.divIcon({
         className: 'knooppunt-badge',
         html: node.ref,
-        iconSize: [28, 28],
-        iconAnchor: [14, 14]
+        iconSize: [26, 26],
+        iconAnchor: [13, 13]
       });
 
-      const marker = L.marker([node.lat, node.lng], { icon: customIcon }).addTo(map);
+      const marker = L.marker([node.lat, node.lon], { icon: customIcon }).addTo(map);
       markers.push(marker);
 
       if (waypoints.length > 1) {
-        document.getElementById('status').innerText = `Knooppuntenroute berekenen naar ${node.ref}...`;
+        const statusEl = document.getElementById('status');
+        statusEl.innerText = `Fietspad berekenen naar knooppunt ${node.ref}...`;
+        statusEl.classList.add('ok');
+
         const start = waypoints[waypoints.length - 2];
         const end = waypoints[waypoints.length - 1];
         
-        const segmentCoords = await fetchStrictKnooppuntSegment(start, end);
+        const segmentCoords = await fetchCyclingRoute(start, end);
         routeSegments.push(segmentCoords);
       }
 
       updateMap();
     });
 
-    async function getExactKnooppuntNode(lat, lng) {
-      const delta = 0.004;
-      const bbox = `${lat - delta},${lng - delta},${lat + delta},${lng + delta}`;
-      const query = `[out:json];node["rcn_ref"](${bbox});out;`;
-      const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
+    // Zoekt in de geladen CSV binnen een straal van max 400 meter
+    function findClosestNode(lat, lng) {
+      let closest = null;
+      let minDistance = Infinity;
 
-      try {
-        const response = await fetch(url);
-        const data = await response.json();
-
-        if (data.elements && data.elements.length > 0) {
-          let closest = null;
-          let minDistance = Infinity;
-
-          data.elements.forEach(el => {
-            const dist = L.latLng(lat, lng).distanceTo(L.latLng(el.lat, el.lon));
-            if (dist < minDistance) {
-              minDistance = dist;
-              closest = { lat: el.lat, lng: el.lon, ref: el.tags.rcn_ref };
-            }
-          });
-
-          if (minDistance < 350) return closest;
+      for (let i = 0; i < allNodes.length; i++) {
+        const node = allNodes[i];
+        const dist = L.latLng(lat, lng).distanceTo(L.latLng(node.lat, node.lon));
+        if (dist < minDistance) {
+          minDistance = dist;
+          closest = node;
         }
-      } catch (err) {
-        console.error("Fout bij knooppunt zoeken:", err);
       }
-      return null;
+
+      return minDistance < 400 ? closest : null;
     }
 
-    async function fetchStrictKnooppuntSegment(startNode, endNode) {
-      // Gebruik BRouter veiligheidsroute 'safety' die fietspaden & bospaden strikt voorrang geeft
-      const url = `https://brouter.de/brouter?lon1=${startNode.lng}&lat1=${startNode.lat}&lon2=${endNode.lng}&lat2=${endNode.lat}&media=geojson&profile=safety`;
+    // 3. OSRM Cycling API: Berekent de route exact over fietspaden
+    async function fetchCyclingRoute(startNode, endNode) {
+      const url = `https://router.project-osrm.org/route/v1/bike/${startNode.lon},${startNode.lat};${endNode.lon},${endNode.lat}?overview=full&geometries=geojson`;
 
       try {
         const response = await fetch(url);
         const data = await response.json();
 
-        if (data.features && data.features.length > 0) {
-          return data.features[0].geometry.coordinates.map(coord => [coord[1], coord[0]]);
+        if (data.routes && data.routes.length > 0) {
+          // OSRM geeft [lon, lat] -> omzetten naar Leaflet [lat, lon]
+          return data.routes[0].geometry.coordinates.map(coord => [coord[1], coord[0]]);
         }
       } catch (err) {
-        console.error("Fout bij BRouter:", err);
+        console.error("Fout bij OSRM routing:", err);
       }
 
-      return [[startNode.lat, startNode.lng], [endNode.lat, endNode.lng]];
+      // Fallback als de server niet antwoordt
+      return [[startNode.lat, startNode.lon], [endNode.lat, endNode.lon]];
     }
 
     function updateMap() {
@@ -207,14 +233,14 @@
       const lastWp = waypoints[waypoints.length - 1];
       
       document.getElementById('info').innerText = `Knooppunten: ${waypoints.length} | Afstand: ${distanceKm} km`;
-      document.getElementById('status').innerText = waypoints.length === 0 
-        ? 'Klik op een knooppuntnummer...' 
-        : `✔ Knooppunt ${lastWp.ref} toegevoegd.`;
+      if (waypoints.length > 0) {
+        document.getElementById('status').innerText = `✔ Knooppunt ${lastWp.ref} toegevoegd.`;
+      }
     }
 
     function getFullTrackPoints() {
       if (waypoints.length === 0) return [];
-      if (waypoints.length === 1) return [[waypoints[0].lat, waypoints[0].lng]];
+      if (waypoints.length === 1) return [[waypoints[0].lat, waypoints[0].lon]];
 
       let fullPath = [];
       routeSegments.forEach((segment, index) => {
@@ -244,7 +270,7 @@
       updateMap();
     }
 
-    // SLIMME EXPORT DIE BOSCH DGWINGT ALLE TUSSENPUNTEN TE VOLGEN
+    // GPX Exporteren voor Bosch Flow App
     function downloadGPX() {
       const fullTrack = getFullTrackPoints();
 
@@ -260,17 +286,21 @@
       gpx += `<gpx version="1.1" creator="Fietsknooppunten GPX Maker" xmlns="http://www.topografix.com/GPX/1/1">\n`;
       gpx += `  <metadata>\n    <name>${escapeXml(rawName)}</name>\n    <time>${timestamp}</time>\n  </metadata>\n`;
       
-      // 1. Knooppunten als officiële Waypoints
+      // Waypoints (Knooppunten)
       waypoints.forEach((wp) => {
-        gpx += `  <wpt lat="${wp.lat}" lon="${wp.lng}">\n    <name>Knooppunt ${wp.ref}</name>\n  </wpt>\n`;
+        gpx += `  <wpt lat="${wp.lat}" lon="${wp.lon}">\n    <name>KP ${wp.ref}</name>\n  </wpt>\n`;
       });
 
-      // 2. Extra viapunten toevoegen om de 150 meter om Bosch te dwingen op het pad te blijven
-      waypoints.forEach((wp) => {
-        gpx += `  <wpt lat="${wp.lat}" lon="${wp.lng}">\n    <name>KP ${wp.ref}</name>\n  </wpt>\n`;
+      // Routepunten (Dwingt Bosch om het fietspad exact te volgen)
+      gpx += `  <rte>\n    <name>${escapeXml(rawName)}</name>\n`;
+      fullTrack.forEach((pt, idx) => {
+        if (idx === 0 || idx === fullTrack.length - 1 || idx % 4 === 0) {
+          gpx += `    <rtept lat="${pt[0]}" lon="${pt[1]}"></rtept>\n`;
+        }
       });
+      gpx += `  </rte>\n`;
 
-      // 3. Volledig Track-spoor
+      // Spoor (Track)
       gpx += `  <trk>\n    <name>${escapeXml(rawName)}</name>\n    <trkseg>\n`;
       fullTrack.forEach(pt => {
         gpx += `      <trkpt lat="${pt[0]}" lon="${pt[1]}"></trkpt>\n`;
@@ -299,6 +329,7 @@
         }
       });
     }
+
 
 // AUTOMATISCHE OFFLINE BEWAREN
         if ('serviceWorker' in navigator) {
